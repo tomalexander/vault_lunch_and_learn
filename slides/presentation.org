@@ -341,8 +341,9 @@
    #+END_SRC
 ** AWS Policies
    The permissions for dynamically generated AWS credentials are under the =sysadmin/vault/aws_roles= folder
-   *NOTE* The dynamic aws permissions MUST be a subset of the permissions granted to the IAM user whose credentials were given to the vault when configuring the secret backend
 
+   *NOTE* The dynamic aws permissions MUST be a subset of the permissions granted to the IAM user whose credentials were given to the vault when configuring the secret backend
+** AWS Policies
    =read_build_artifacts.json=
    #+BEGIN_SRC js
      {
@@ -368,7 +369,7 @@
    The configuration for dynamic postgres credentials are under =sysadmin/vault/databases=
 
    We configure staging to rotate postgres creds every hour to make sure no issues arise from expiring credentials. Production has a much longer ttl.
-
+** Database configuration
    =staging.json=
    #+BEGIN_SRC js
      {
