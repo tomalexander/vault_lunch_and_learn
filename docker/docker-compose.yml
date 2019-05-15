@@ -1,0 +1,14 @@
+version: '3'
+services:
+  shell:
+    build: vault
+    environment:
+      VAULT_ADDR: http://vault:8200/
+  vault:
+    build: vault
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: vaultdemo
+      POSTGRES_USER: vaultdemo
+      POSTGRES_PASSWORD: vaultdemopassword

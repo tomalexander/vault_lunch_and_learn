@@ -1,0 +1,390 @@
+#+OPTIONS: ':nil *:t -:t ::t <:t H:2 \n:nil ^:t arch:headline
+#+OPTIONS: author:t broken-links:nil c:nil creator:nil
+#+OPTIONS: d:(not "LOGBOOK") date:nil e:t email:nil f:t inline:t num:t
+#+OPTIONS: p:nil pri:nil prop:nil stat:t tags:t tasks:t tex:t
+#+OPTIONS: timestamp:t title:t toc:nil todo:t |:t
+#+TITLE: Hashicorp Vault Because Security
+#+DATE: <2019-03-27 Wed>
+#+AUTHOR: Tom Alexander
+#+EMAIL: tom@stella.ai
+#+LANGUAGE: en
+#+SELECT_TAGS: export
+#+EXCLUDE_TAGS: noexport
+#+CREATOR: Emacs 26.1 (Org mode 9.1.9)
+#+latex_header: \mode<beamer>{\usetheme{Madrid}}
+#+BEAMER_COLOR_THEME: rose
+#+LaTeX_HEADER: \usepackage{svg}
+#+LaTeX_HEADER: \usemintedstyle{tango}
+#+latex_header: \definecolor{mintedbg}{HTML}{FFF8DC}
+* Intro
+** What is the Vault
+   - Hashicorp Vault securely manages your secrets
+     - Static secrets
+     - Dynamically generated secrets
+** Features
+   - Plugin system to create custom secret backends
+   - Encrypts secrets both at rest and in transit between the client and the Vault
+   - ACL system to grant specific access to specific tokens
+   - Supports High Availability
+   - Shamir Key Sharing
+* Explanation
+** Overview
+   - The interface to the vault can be thought of as similiar to a filesystem, where you read, write, and list paths
+   - On the HTTP API this is represented with GET, PUT/POST, and LIST requests
+** Architecture
+   [[./images/vaultbasicarch.png]]
+** Static Secrets
+   Static secrets are stored in the KVv2 secrets backend
+
+   Secrets are stored as JSON objects
+** Dynamic Secrets
+   The vault has the capability of generating secrets on-the-fly.
+
+   These secrets have a limited lifespan.
+
+   Current uses within Stella:
+
+   - Postgresql
+   - AWS
+** Sealing
+   The vault protects secrets at rest by encrypting all the data that is stored
+
+   The storage backend is untrusted so all secrets are encrypted before being sent to the stoage backend
+
+   To provide the decryption key, an unseal process must occur
+** Sealing
+   [[./images/unseal.jpg]]
+** Sealing
+   The unseal process involves providing the configured amount of unseal keys to the vault over the API so that it can decrypt the data stored in the vault
+
+   The process for generating these unseal keys is Shamir's Secret Sharing
+** Logs
+   The vault optionally records logs if you mount an audit backend
+
+   The identifying information in the logs are run through an HMAC
+** Logs
+   #+BEGIN_SRC js
+     {
+       "time": "2018-10-28T04:01:37.115675986Z",
+       "type": "response",
+       "auth": {
+	 "client_token": "hmac-sha256:01db1c61db5cbba21f17971e173a115ddb2db765f1e0583070e151525ee1406a",
+	 "accessor": "hmac-sha256:d3d5c3caaba323309ce335ed5db3e333a2397e5a1d13ff128b26f4fc6e623331",
+	 "display_name": "token",
+	 "policies": [
+	   "default",
+	   "prod_base_read",
+	   "read_build_artifacts"
+	 ],
+	 "token_policies": [
+	   "default",
+	   "prod_base_read",
+	   "read_build_artifacts"
+	 ],
+	 "metadata": null,
+	 "entity_id": ""
+       },
+   #+END_SRC
+* Walk-Through
+** Walk-Through
+   We have a docker-compose setup to create a simple vault environment to learn/play with the vault
+
+   The vault is primarily accessed through an HTTP API, however for this walk-through we will be using the official command-line client which is a thin wrapper around the HTTP APIs.
+
+   At Stella, our vault is managed through a higher-level =vaultadm.py= script which automates more complex tasks
+
+** Launch the container
+   To launch the docker-compose setup, run =run.bash=. This spins up a docker container for vault, postgres, and a shell.
+** Check the status
+   #+BEGIN_SRC sh
+     $ vault status
+     Key                Value
+     ---                -----
+     Seal Type          shamir
+     Initialized        false
+     Sealed             true
+     Total Shares       0
+     Threshold          0
+     Unseal Progress    0/0
+     Unseal Nonce       n/a
+     Version            n/a
+     HA Enabled         false
+   #+END_SRC
+** Init
+   #+BEGIN_SRC sh
+     $ vault operator init -key-shares=1 -key-threshold=1
+     Unseal Key 1: IYBK1L2v2m1cGUVWbYgSVTt6UA7UosNUNFHw2fHvMmU=
+
+     Initial Root Token: s.LZeSzDsbCslpiOCW6bTT1O1e
+
+     Vault initialized with 1 key shares and a key threshold of 1. Please securely
+     distribute the key shares printed above. When the Vault is re-sealed,
+     restarted, or stopped, you must supply at least 1 of these keys to unseal it
+     before it can start servicing requests.
+
+     Vault does not store the generated master key. Without at least 1 key to
+     reconstruct the master key, Vault will remain permanently sealed!
+
+     It is possible to generate new unseal keys, provided you have a quorum of
+     existing unseal keys shares. See "vault operator rekey" for more information.
+   #+END_SRC
+** Unseal
+   #+BEGIN_SRC sh
+     $ vault operator unseal IYBK1L2v2m1cGUVWbYgSVTt6UA7UosNUNFHw2fHvMmU=
+     Key             Value
+     ---             -----
+     Seal Type       shamir
+     Initialized     true
+     Sealed          false
+     Total Shares    1
+     Threshold       1
+     Version         1.1.1
+     Cluster Name    vault-cluster-a10a0b1d
+     Cluster ID      f5deee9c-a090-67bc-7cab-dc5e8785637b
+     HA Enabled      false
+   #+END_SRC
+** Generate Root Token
+   #+BEGIN_SRC sh
+     # Generate one time password, you can optionally skip this step if you want to generate your own
+     vault operator generate-root -generate-otp
+     vault operator generate-root -init -otp="<otp>"
+     vault operator generate-root -otp="<otp>"
+   #+END_SRC
+   This will return an "Encoded Token" which you must XOR with the bytes of the OTP to get your final root token
+
+   *Important*: despite both strings being encoded as base64 (otp and encoded token), you are not XORing the decoded bytes of the OTP:
+   #+BEGIN_SRC text
+     final_token = base64_decode(encoded_token) XOR ascii_bytes(otp)
+   #+END_SRC
+** Login
+   #+BEGIN_SRC sh
+     $ vault login s.LZeSzDsbCslpiOCW6bTT1O1e
+     Success! You are now authenticated. The token information displayed below
+     is already stored in the token helper. You do NOT need to run "vault login"
+     again. Future Vault requests will automatically use this token.
+
+     Key                  Value
+     ---                  -----
+     token                s.LZeSzDsbCslpiOCW6bTT1O1e
+     token_accessor       he80YYfIRiY6zCUQTzM3q1j9
+     token_duration       Infinite
+     token_renewable      false
+     token_policies       ["root"]
+     identity_policies    []
+     policies             ["root"]
+   #+END_SRC
+** Enable Vault KV v2
+   #+BEGIN_SRC sh
+     $ vault secrets enable -version=2 kv
+     Success! Enabled the kv secrets engine at: kv/
+   #+END_SRC
+** Write our first secret
+   #+BEGIN_SRC sh
+     $ vault kv put kv/hello foo=world
+     Key              Value
+     ---              -----
+     created_time     2019-04-45T12:51:40.166998295Z
+     deletion_time    n/a
+     destroyed        false
+     version          1
+   #+END_SRC
+** Write a new version of the secret
+   #+BEGIN_SRC sh
+     $ vault kv put kv/hello foo=bar password=hunter2
+     Key              Value
+     ---              -----
+     created_time     2019-04-45T12:53:17.221746772Z
+     deletion_time    n/a
+     destroyed        false
+     version          2
+   #+END_SRC
+** Read our secret
+   #+BEGIN_SRC sh
+     $ vault kv get kv/hello
+     ====== Metadata ======
+     Key              Value
+     ---              -----
+     created_time     2019-04-45T12:53:17.221746772Z
+     deletion_time    n/a
+     destroyed        false
+     version          2
+
+     ====== Data ======
+     Key         Value
+     ---         -----
+     foo         bar
+     password    hunter2
+   #+END_SRC
+** Read an old version of our secret
+   #+BEGIN_SRC sh
+     $ vault kv get -version=1 kv/hello
+     ====== Metadata ======
+     Key              Value
+     ---              -----
+     created_time     2019-04-45T12:51:40.166998295Z
+     deletion_time    n/a
+     destroyed        false
+     version          1
+
+     === Data ===
+     Key    Value
+     ---    -----
+     foo    world
+   #+END_SRC
+** Delete the secret
+   *Note* Deleting a secret does not destroy its history in KVv2
+   #+BEGIN_SRC sh
+     $ vault kv delete kv/hello
+     Success! Data deleted (if it existed) at: kv/hello
+   #+END_SRC
+** Delete the secret
+   #+BEGIN_SRC sh
+     $ vault kv undelete -versions 1,2 kv/hello
+     Success! Data written to: kv/undelete/hello
+
+     $ vault kv get kv/hello
+     ====== Metadata ======
+     Key              Value
+     ---              -----
+     created_time     2019-04-45T12:53:17.221746772Z
+     deletion_time    n/a
+     destroyed        false
+     version          2
+
+     ====== Data ======
+     Key         Value
+     ---         -----
+     foo         bar
+     password    hunter2
+   #+END_SRC
+** Enable the postgres dynamic secrets engine
+   #+BEGIN_SRC sh
+     $ vault secrets enable -path postgres/ database
+     Success! Enabled the database secrets engine at: postgres/
+   #+END_SRC
+** Configure postgres dynamic secrets engine
+   #+BEGIN_SRC sh
+     $ vault write postgres/config/vaultdemo \
+	 plugin_name=postgresql-database-plugin \
+	 allowed_roles="my-role" \
+	 connection_url="postgresql://{{username}}:{{password}}@postgres:5432/?sslmode=disable" \
+	 username="vaultdemo" \
+	 password="vaultdemopassword" \
+	 verify_connection=false
+   #+END_SRC
+** Configure my-role in the postgres dynamic secrets engine
+   #+BEGIN_SRC sh
+     $ vault write postgres/roles/my-role \
+	 db_name=vaultdemo \
+	 creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; \
+	     GRANT SELECT ON ALL TABLES IN SCHEMA public TO \"{{name}}\";" \
+	 default_ttl="1h" \
+	 max_ttl="24h"
+     Success! Data written to: postgres/roles/my-role
+   #+END_SRC
+** Generate dynamic credentials
+   #+BEGIN_SRC sh
+     $ vault read postgres/creds/my-role
+     Key                Value
+     ---                -----
+     lease_id           postgres/creds/my-role/dYsNFJz4tdEjqDIoT9VAP9SZ
+     lease_duration     1h
+     lease_renewable    true
+     password           A1a-kGhk0Cnwqpeha0bJ
+     username           v-root-my-role-uu8htnEqjNZHqQkLFdrj-1557931205
+
+     $ psql 'postgresql://v-root-my-role-uu8htnEqjNZHqQkLFdrj-1557931205:A1a-kGhk0Cnwqpeha0bJ@postgres:5432/vaultdemo'
+     psql (11.3, server 11.2 (Debian 11.2-1.pgdg90+1))
+     Type "help" for help.
+
+     vaultdemo=>
+   #+END_SRC
+* Vault at Stella
+** Overview
+   - The vault is managed through the =sysadmin= repo in the =sysadmin/vault= folder
+   - The main interface for that is =vaultadm.py=
+
+     #+BEGIN_SRC text
+       /secrets/v1/prod/company/amgen
+	  ^     ^    ^            ^
+	  |     |    |            |
+       Mount point of KVv2 engine |
+		|    |            |
+	     Version number so we can change the schema in the future
+		     |            |
+		  VAULT_ENVIRONMENT
+				  |
+			     company code
+     #+END_SRC
+** Editing secrets
+   The vaultadm script automates downloading the secret to a temp file, opening an editor, and then uploading the secret back to the server
+   #+BEGIN_SRC sh
+     EDITOR=emacs REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt ~/sysadmin/vault/vaultadm.py --target=https://private-vault.stella.ai:8200 edit_secret --path 'v1/prod/misc/slack'
+   #+END_SRC
+** Vault Token Policies
+   Vault tokens are assigned roles which are granted access to specific permissions under the =sysadmin/vault/policies= folder
+
+   =renew_certificates.hcl=
+   #+BEGIN_SRC text
+     path "auth/token/lookup-self" {
+       capabilities = ["read"]
+     }
+
+     // Can create AWS creds with read access to the stella-build-artifacts s3 bucket
+     path "aws/sts/renew_certificates" { capabilities = ["create", "update"] }
+     path "secret/data/v1/prod/misc/tls/*" { capabilities = ["create", "update", "list"] }
+   #+END_SRC
+** Vault Token Policies
+   To create new tokens, you would invoke =create_read_token= or =create_write_token= which receives an environment parameter which specifies what list of policies are granted to the token:
+   #+BEGIN_SRC sh
+     $ REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt ~/sysadmin/vault/vaultadm.py -v --target=https://private-vault.stella.ai:8200 create_read_token --environment prod
+   #+END_SRC
+** AWS Policies
+   The permissions for dynamically generated AWS credentials are under the =sysadmin/vault/aws_roles= folder
+   *NOTE* The dynamic aws permissions MUST be a subset of the permissions granted to the IAM user whose credentials were given to the vault when configuring the secret backend
+
+   =read_build_artifacts.json=
+   #+BEGIN_SRC js
+     {
+	 "Version": "2012-10-17",
+	 "Statement": [
+	     {
+		 "Sid": "VisualEditor0",
+		 "Effect": "Allow",
+		 "Action": [
+		     "s3:GetObject",
+		     "s3:ListBucket",
+		     "s3:ListObjects"
+		 ],
+		 "Resource": [
+		     "arn:aws:s3:::stella-build-artifacts/*",
+		     "arn:aws:s3:::stella-build-artifacts"
+		 ]
+	     }
+	 ]
+     }
+   #+END_SRC
+** Database configuration
+   The configuration for dynamic postgres credentials are under =sysadmin/vault/databases=
+
+   We configure staging to rotate postgres creds every hour to make sure no issues arise from expiring credentials. Production has a much longer ttl.
+
+   =staging.json=
+   #+BEGIN_SRC js
+     {
+       "environment": "staging",
+       "type": "postgres",
+       "connection_url": "postgresql://vault_user:hunter2@private-db01-stg.stella.ai:5432/stella_db",
+       "default_ttl_seconds": 3600,
+       "max_ttl_seconds": 1728000,
+       "roles": {
+	 "super": {
+	   "creation_statements": [
+	     "CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'"
+	   ]
+	 }
+       }
+     }
+   #+END_SRC
+** Auto-renewing tokens
+   Our staging tokens get added to a list in =sysadmin/vault/renew_tokens= which a periodic script on =ctr01-prd= renews those tokens
