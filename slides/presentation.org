@@ -95,6 +95,8 @@
    At Stella, our vault is managed through a higher-level =vaultadm.py= script which automates more complex tasks
 
 ** Launch the container
+   The github repo is for the docker-compose setup is located at [[https://github.com/tomalexander/vault_lunch_and_learn]]
+
    To launch the docker-compose setup, run =run.bash=. This spins up a docker container for vault, postgres, and a shell.
 ** Check the status
    #+BEGIN_SRC sh
