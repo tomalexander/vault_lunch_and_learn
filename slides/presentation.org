@@ -16,6 +16,7 @@
 #+LaTeX_HEADER: \usepackage{svg}
 #+LaTeX_HEADER: \usemintedstyle{tango}
 #+latex_header: \definecolor{mintedbg}{HTML}{FFF8DC}
+#+BEAMER_HEADER: \AtBeginSection[]{\begin{frame}<beamer>\frametitle{Presentat‌‌ion agenda}\tableofcontents[currentsection]\end{frame}}
 * Intro
 ** What is the Vault
    - Hashicorp Vault securely manages your secrets
